@@ -45,3 +45,7 @@ next-env.d.ts
 *.user
 *.suo
 
+
+# App settings (contains database credentials)
+SkillGraph.Api/appsettings.json
+SkillGraph.Api/appsettings.*.json

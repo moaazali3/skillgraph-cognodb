@@ -373,7 +373,7 @@ export default function GraphCanvas({
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const getCanvasCoords = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const getCanvasCoords = (e: React.MouseEvent<HTMLCanvasElement> | React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return { worldX: 0, worldY: 0, mouseX: 0, mouseY: 0 };
     const rect = canvas.getBoundingClientRect();
@@ -414,17 +414,18 @@ export default function GraphCanvas({
   };
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: selectedNode ? '1fr 300px' : '1fr', gap: 14, transition: 'all 0.3s ease' }}>
+    <div className={`graph-layout-container ${selectedNode ? 'has-selection' : ''}`}>
       {/* Canvas Area */}
-      <div ref={containerRef} className="glass-panel" style={{ position: 'relative', height: '560px', overflow: 'hidden', background: '#050811' }}>
+      <div ref={containerRef} className="glass-panel canvas-wrapper">
         {/* Top Filter Bar */}
-        <div style={{ position: 'absolute', top: 12, left: 12, right: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', pointerEvents: 'none', zIndex: 10 }}>
-          <div className="glass-panel" style={{ display: 'flex', gap: 6, padding: 6, pointerEvents: 'auto', background: 'rgba(15,23,42,0.95)' }}>
+        <div className="top-bar-wrapper">
+          <div className="glass-panel filter-bar-scrollable">
             {['All', 'Frontend', 'Backend', 'AI & Data', 'DevOps & Cloud', 'Graph & Data', 'Role'].map(cat => (
               <button
                 key={cat}
                 onClick={() => handleCategoryClick(cat)}
                 className={`btn-filter ${activeCategory === cat && highlightedPathNodeIds.length === 0 ? 'active' : ''}`}
+                style={{ flexShrink: 0 }}
               >
                 {cat === 'Role' ? 'Careers/Roles' : cat}
               </button>
@@ -436,7 +437,7 @@ export default function GraphCanvas({
                   setActiveCategory('All');
                 }}
                 className="btn-secondary"
-                style={{ fontSize: 11, padding: '4px 10px', color: '#fbbf24', borderColor: 'rgba(251,191,36,0.4)' }}
+                style={{ fontSize: 11, padding: '4px 10px', color: '#fbbf24', borderColor: 'rgba(251,191,36,0.4)', flexShrink: 0 }}
               >
                 <EyeOff style={{ width: 12, height: 12 }} />
                 <span>Reset Highlight ({highlightedPathNodeIds.length})</span>
@@ -444,7 +445,7 @@ export default function GraphCanvas({
             )}
           </div>
 
-          <div style={{ display: 'flex', gap: 6, pointerEvents: 'auto' }}>
+          <div style={{ display: 'flex', gap: 6, pointerEvents: 'auto', flexShrink: 0 }}>
             <button onClick={() => { transformRef.current.k = Math.min(transformRef.current.k * 1.15, 2.5); }} className="btn-secondary" style={{ padding: '6px 10px' }} title="Zoom In">
               <ZoomIn style={{ width: 14, height: 14 }} />
             </button>
@@ -460,7 +461,7 @@ export default function GraphCanvas({
         {/* Canvas */}
         <canvas
           ref={canvasRef}
-          onMouseDown={e => {
+          onPointerDown={e => {
             const { worldX, worldY, mouseX, mouseY } = getCanvasCoords(e);
             const hit = findNodeAt(worldX, worldY);
             if (hit) {
@@ -471,14 +472,17 @@ export default function GraphCanvas({
               dragStartRef.current = { x: mouseX - transformRef.current.x, y: mouseY - transformRef.current.y };
             }
           }}
-          onMouseMove={e => {
+          onPointerMove={e => {
             const { mouseX, mouseY } = getCanvasCoords(e);
             if (isDraggingRef.current) {
               transformRef.current.x = mouseX - dragStartRef.current.x;
               transformRef.current.y = mouseY - dragStartRef.current.y;
             }
           }}
-          onMouseUp={() => {
+          onPointerUp={() => {
+            isDraggingRef.current = false;
+          }}
+          onPointerCancel={() => {
             isDraggingRef.current = false;
           }}
           onWheel={e => {
@@ -492,7 +496,7 @@ export default function GraphCanvas({
               transformRef.current.k = newK;
             }
           }}
-          style={{ width: '100%', height: '100%', cursor: 'grab' }}
+          style={{ width: '100%', height: '100%', cursor: 'grab', touchAction: 'none' }}
         />
       </div>
 
