@@ -15,9 +15,9 @@ builder.Services.AddSwaggerGen(c =>
 builder.Services.AddSingleton<IDriver>(sp =>
 {
     var config = sp.GetRequiredService<IConfiguration>();
-    var uri = config["CognoDB:Uri"] ?? "bolt+s://db-43033552.bravo.databases.cognodb.com";
+    var uri = config["CognoDB:Uri"] ?? throw new ArgumentNullException("CognoDB:Uri is missing in configuration/environment variables.");
     var user = config["CognoDB:User"] ?? "cognodb";
-    var password = config["CognoDB:Password"] ?? "8b66f1a4bbbb136517d335d00b1eaabd";
+    var password = config["CognoDB:Password"] ?? throw new ArgumentNullException("CognoDB:Password is missing in configuration/environment variables.");
 
     return GraphDatabase.Driver(uri, AuthTokens.Basic(user, password), o =>
     {
