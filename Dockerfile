@@ -21,4 +21,6 @@ RUN dotnet publish SkillGraph.Api.csproj -c Release -o /app/publish /p:UseAppHos
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final
 WORKDIR /app
 COPY --from=dotnet-build /app/publish .
+ENV ASPNETCORE_URLS=http://+:7860
+EXPOSE 7860
 ENTRYPOINT ["dotnet", "SkillGraph.Api.dll"]
