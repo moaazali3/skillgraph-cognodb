@@ -1,8 +1,45 @@
 # SkillGraph: Tech Career & Skill Dependency Knowledge Graph
 
-> Built with **ASP.NET Core (C#)**, **React 19 / TypeScript (Vite)**, and **CognoDB Cloud** (openCypher / Bolt 5.x).
+> Built with **ASP.NET Core (.NET 9 / C#)**, **React 19 / TypeScript (Vite)**, and **CognoDB Cloud** (openCypher / Bolt 5.x).
 
 SkillGraph is an enterprise-grade graph intelligence application that models software engineering career pathways, multi-hop transitive skill dependencies, developer candidate profiles, and learning roadmaps on top of **CognoDB Cloud**.
+
+---
+
+## 📸 Application Screenshots & Visual Showcase
+
+### 1. Interactive Skill Dependency Knowledge Graph
+Visualize multi-layer technology stacks from foundational programming paradigms to advanced architectures, tracing transitive dependency paths across 5+ hops in real-time.
+
+![Interactive Skill Roadmap](screenshots/01-graph-roadmap.png)
+
+---
+
+### 2. Node Dependency Inspection & Path Highlighting
+Select any skill node to instantly analyze incoming prerequisite dependencies, outgoing unlocked technologies, and demand metrics directly retrieved from CognoDB.
+
+![Skill Dependency Inspection](screenshots/02-node-dependency-inspection.png)
+
+---
+
+### 3. Career Role Pathway & Prerequisite Graph Tracing
+Target any engineering role (e.g. *High-Performance Systems Engineer*, *AI/LLM Systems Engineer*) to automatically illuminate required foundational skill pathways across the graph.
+
+![Target Role Path Tracing](screenshots/03-role-path-tracing.png)
+
+---
+
+### 4. Graph-Powered Skill Gap & Readiness Engine
+Compare developer candidate profiles against target career milestones. The graph engine evaluates acquired vs. missing competencies, calculating graph-distance readiness bonuses and prioritized learning steps.
+
+![Skill Gap Analyzer](screenshots/04-skill-gap-analyzer.png)
+
+---
+
+### 5. Enterprise Career Roles & Market Demand Catalog
+Live compensation benchmarks, growth trajectories, and dynamic skill requirements synced with the ASP.NET Core & CognoDB graph backend.
+
+![Career Roles and Market Demand](screenshots/05-career-market-demand.png)
 
 ---
 
@@ -126,14 +163,25 @@ LIMIT 5
 
 ## 🚀 Setup & Run Instructions
 
-### 1. Run the .NET Web API Backend
+### 1. Provision CognoDB Cloud Instance
+1. Go to [https://console.cognodb.com/signup](https://console.cognodb.com/signup) and create a free account (no credit card required).
+2. Create a free **c0** instance and choose your preferred cloud region.
+3. Save your connection URI (`bolt+s://<instance-id>.databases.cognodb.cloud`), username (`cognodb`), and generated password.
+4. Configure connection credentials in `SkillGraph.Api/appsettings.json` or via environment variables:
+   ```bash
+   COGNODB_URI="bolt+s://<instance-id>.databases.cognodb.cloud"
+   COGNODB_USER="cognodb"
+   COGNODB_PASSWORD="<your-password>"
+   ```
+
+### 2. Run the .NET Web API Backend
 ```bash
 cd SkillGraph.Api
 dotnet run
 ```
-Backend API & Swagger will be live at `http://localhost:5103` (and Swagger at `http://localhost:5103/swagger`).
+Backend API & Swagger will be live at `http://localhost:5103` (and Swagger at `http://localhost:5103/swagger`). The backend will automatically seed initial graph nodes & relationships upon startup if empty, or you can trigger `/api/seed` via the UI / Swagger.
 
-### 2. Run the React Development Frontend
+### 3. Run the React Development Frontend
 ```bash
 cd frontend
 npm install

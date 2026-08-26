@@ -41,6 +41,8 @@ next-env.d.ts
 # .NET artifacts
 /SkillGraph.Api/bin/
 /SkillGraph.Api/obj/
+publish_output/
+*.zip
 .vs/
 *.user
 *.suo
@@ -49,3 +51,4 @@ next-env.d.ts
 # App settings (contains database credentials)
 SkillGraph.Api/appsettings.json
 SkillGraph.Api/appsettings.*.json
+

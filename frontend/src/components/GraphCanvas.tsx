@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { ZoomIn, ZoomOut, RotateCcw, Sparkles, ArrowRight, CheckCircle2, ChevronRight, Info, EyeOff } from 'lucide-react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
+import { ZoomIn, ZoomOut, RotateCcw, Sparkles, ArrowRight, EyeOff, Layers, CheckCircle2 } from 'lucide-react';
 
 export interface InputNode {
   id: string;
@@ -9,6 +9,9 @@ export interface InputNode {
   difficulty?: string;
   marketDemand?: number;
   description?: string;
+  domain?: string;
+  avgSalary?: string;
+  seniorityLevel?: string;
   val: number;
   x?: number;
   y?: number;
@@ -33,7 +36,7 @@ interface GraphCanvasProps {
   nodes: InputNode[];
   links: Link[];
   highlightedPathNodeIds?: string[];
-  onSelectNode?: (node: Node) => void;
+  onSelectNode?: (node: Node | null) => void;
   onTracePathTo?: (targetSkillId: string) => void;
   onClearHighlights?: () => void;
 }
@@ -112,7 +115,7 @@ export default function GraphCanvas({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeCategory, setActiveCategory] = useState<string>('All');
-  const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
   const transformRef = useRef({ x: 40, y: 30, k: 0.95 });
   const isDraggingRef = useRef(false);
@@ -121,13 +124,6 @@ export default function GraphCanvas({
   const simulationNodesRef = useRef<Node[]>([]);
   const simulationLinksRef = useRef<Link[]>([]);
   const animFrameRef = useRef<number>(0);
-
-  // When external highlighted path changes, adjust filter context
-  useEffect(() => {
-    if (highlightedPathNodeIds.length > 0) {
-      setActiveCategory('Highlight');
-    }
-  }, [highlightedPathNodeIds]);
 
   // Initialize Structured Left-to-Right Hierarchical Layout
   useEffect(() => {
@@ -140,7 +136,7 @@ export default function GraphCanvas({
 
     const tierGroups: Record<number, InputNode[]> = { 0: [], 1: [], 2: [], 3: [], 4: [] };
     cleanNodes.forEach(n => {
-      const tier = SKILL_TIERS[n.id] ?? 2;
+      const tier = SKILL_TIERS[n.id] ?? (n.type === 'Role' ? 4 : 2);
       tierGroups[tier]?.push(n);
     });
 
@@ -172,6 +168,92 @@ export default function GraphCanvas({
     simulationLinksRef.current = cleanLinks.map(l => ({ ...l }));
   }, [initialNodes, initialLinks]);
 
+  // Find active node object
+  const selectedNode = useMemo(() => {
+    if (!selectedNodeId) return null;
+    return simulationNodesRef.current.find(n => n.id === selectedNodeId) || null;
+  }, [selectedNodeId, simulationNodesRef.current]);
+
+  // Compute direct incoming prerequisites and outgoing unlocks
+  const { incomingPrereqs, outgoingSkills, outgoingRoles, fullUpstreamIds } = useMemo(() => {
+    if (!selectedNode) {
+      return { incomingPrereqs: [], outgoingSkills: [], outgoingRoles: [], fullUpstreamIds: new Set<string>() };
+    }
+
+    const allNodes = simulationNodesRef.current;
+    const allLinks = simulationLinksRef.current;
+    const nodeMap = new Map(allNodes.map(n => [n.id, n]));
+
+    let inPrereqs: Node[] = [];
+    let outSkills: Node[] = [];
+    let outRoles: Node[] = [];
+
+    if (selectedNode.type === 'Role') {
+      // Role requires skills (links where source is roleId and target is skill)
+      inPrereqs = allLinks
+        .filter(l => l.source === selectedNode.id && (l.type === 'REQUIRES_SKILL' || nodeMap.get(l.target)?.type === 'Skill'))
+        .map(l => nodeMap.get(l.target))
+        .filter(Boolean) as Node[];
+    } else {
+      // Skill needs prerequisites (links where target is skillId and type is PREREQUISITE_FOR)
+      inPrereqs = allLinks
+        .filter(l => l.target === selectedNode.id && l.type === 'PREREQUISITE_FOR')
+        .map(l => nodeMap.get(l.source))
+        .filter(Boolean) as Node[];
+
+      // Skill unlocks downstream skills
+      outSkills = allLinks
+        .filter(l => l.source === selectedNode.id && l.type === 'PREREQUISITE_FOR')
+        .map(l => nodeMap.get(l.target))
+        .filter(Boolean) as Node[];
+
+      // Skill is required by Roles
+      outRoles = allLinks
+        .filter(l => l.target === selectedNode.id && (l.type === 'REQUIRES_SKILL' || nodeMap.get(l.source)?.type === 'Role'))
+        .map(l => nodeMap.get(l.source))
+        .filter(Boolean) as Node[];
+    }
+
+    // Compute complete upstream recursive tree for path highlighting
+    const upstreamIds = new Set<string>([selectedNode.id]);
+    const queue = [selectedNode.id];
+
+    while (queue.length > 0) {
+      const currId = queue.shift()!;
+      const currNode = nodeMap.get(currId);
+      if (!currNode) continue;
+
+      if (currNode.type === 'Role') {
+        const directReqs = allLinks
+          .filter(l => l.source === currId && (l.type === 'REQUIRES_SKILL' || nodeMap.get(l.target)?.type === 'Skill'))
+          .map(l => l.target);
+        for (const sId of directReqs) {
+          if (!upstreamIds.has(sId)) {
+            upstreamIds.add(sId);
+            queue.push(sId);
+          }
+        }
+      } else {
+        const directPrereqs = allLinks
+          .filter(l => l.target === currId && l.type === 'PREREQUISITE_FOR')
+          .map(l => l.source);
+        for (const pId of directPrereqs) {
+          if (!upstreamIds.has(pId)) {
+            upstreamIds.add(pId);
+            queue.push(pId);
+          }
+        }
+      }
+    }
+
+    return {
+      incomingPrereqs: inPrereqs,
+      outgoingSkills: outSkills,
+      outgoingRoles: outRoles,
+      fullUpstreamIds: upstreamIds
+    };
+  }, [selectedNode, simulationNodesRef.current, simulationLinksRef.current]);
+
   // Main Canvas Render Loop
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -198,8 +280,16 @@ export default function GraphCanvas({
       const nodes = simulationNodesRef.current;
       const links = simulationLinksRef.current;
       const nodeMap = new Map<string, Node>(nodes.map(n => [n.id, n]));
-      const pathSet = new Set(highlightedPathNodeIds);
-      const hasCustomPath = pathSet.size > 0;
+
+      // Active path calculation: either explicit highlightedPathNodeIds or selected node's upstream path
+      const pathSet = new Set<string>();
+      if (highlightedPathNodeIds.length > 0) {
+        highlightedPathNodeIds.forEach(id => pathSet.add(id));
+      } else if (selectedNode) {
+        fullUpstreamIds.forEach(id => pathSet.add(id));
+      }
+
+      const hasActivePath = pathSet.size > 0;
 
       // Draw Roadmap Tier Background Columns
       const tierNames = ['1. FOUNDATION', '2. CORE STACK', '3. ADVANCED', '4. SPECIALIZED', '5. TARGET ROLES'];
@@ -221,22 +311,24 @@ export default function GraphCanvas({
         let tg = nodeMap.get(link.target);
         if (!s || !tg) continue;
 
-        // If link connects a role to a skill in reverse, orient Skill (Left) -> Role (Right)
+        // If link connects a role to a skill (REQUIRES_SKILL), orient Skill (Left) -> Role (Right) visually
+        let isRoleLink = false;
         if (s.type === 'Role' && tg.type === 'Skill') {
           const temp = s;
           s = tg;
           tg = temp;
+          isRoleLink = true;
         }
 
-        const isPath = pathSet.has(s.id) && pathSet.has(tg.id);
+        const isLinkInActivePath = pathSet.has(s.id) && pathSet.has(tg.id);
         const isSelectedLink = selectedNode && (s.id === selectedNode.id || tg.id === selectedNode.id);
         
-        // Check if link belongs to currently active filter category
+        // Category filtering
         const sRoleCats = ROLE_CATEGORIES[s.id] || [];
         const tgRoleCats = ROLE_CATEGORIES[tg.id] || [];
         const sMatchesCat = activeCategory === 'All' || s.category === activeCategory || s.type === activeCategory || sRoleCats.includes(activeCategory);
         const tgMatchesCat = activeCategory === 'All' || tg.category === activeCategory || tg.type === activeCategory || tg.type === 'Role' || tgRoleCats.includes(activeCategory);
-        const isCategoryLink = activeCategory !== 'All' && activeCategory !== 'Highlight' && (sMatchesCat && tgMatchesCat);
+        const isCategoryLink = activeCategory !== 'All' && (sMatchesCat && tgMatchesCat);
         const catColor = CATEGORY_COLORS[activeCategory] || '#6366f1';
 
         ctx.beginPath();
@@ -247,29 +339,24 @@ export default function GraphCanvas({
         const cp2y = tg.y;
         ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, tg.x, tg.y);
 
-        if (isPath) {
-          ctx.strokeStyle = '#38bdf8';
+        if (isLinkInActivePath || isSelectedLink) {
+          ctx.strokeStyle = isSelectedLink ? '#a855f7' : '#38bdf8';
           ctx.lineWidth = 3.5;
-          ctx.shadowColor = '#38bdf8';
-          ctx.shadowBlur = 14;
+          ctx.shadowColor = isSelectedLink ? '#a855f7' : '#38bdf8';
+          ctx.shadowBlur = 12;
         } else if (isCategoryLink) {
           ctx.strokeStyle = catColor;
           ctx.lineWidth = 3;
           ctx.shadowColor = catColor;
-          ctx.shadowBlur = 12;
-        } else if (isSelectedLink) {
-          ctx.strokeStyle = 'rgba(168, 85, 247, 0.9)';
-          ctx.lineWidth = 2.5;
-          ctx.shadowColor = '#a855f7';
-          ctx.shadowBlur = 8;
-        } else if (hasCustomPath || (activeCategory !== 'All' && activeCategory !== 'Highlight')) {
+          ctx.shadowBlur = 10;
+        } else if (hasActivePath || activeCategory !== 'All') {
           // Dimmed background link
           ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
           ctx.lineWidth = 1;
           ctx.shadowBlur = 0;
         } else {
           // Default clean link
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
           ctx.lineWidth = 1.2;
           ctx.shadowBlur = 0;
         }
@@ -277,10 +364,10 @@ export default function GraphCanvas({
         ctx.shadowBlur = 0;
 
         // Draw directional arrowhead on the target
-        const shouldDrawArrow = isPath || isCategoryLink || isSelectedLink || (!hasCustomPath && activeCategory === 'All');
+        const shouldDrawArrow = isLinkInActivePath || isSelectedLink || isCategoryLink || (!hasActivePath && activeCategory === 'All');
         if (shouldDrawArrow) {
           const arrowAngle = Math.atan2(tg.y - cp2y, tg.x - cp2x);
-          const arrowSize = isPath || isCategoryLink ? 7 : (isSelectedLink ? 6 : 4);
+          const arrowSize = (isLinkInActivePath || isSelectedLink || isCategoryLink) ? 7 : 4;
           const arrowX = tg.x - (tg.type === 'Role' ? 17 : 13) * Math.cos(arrowAngle);
           const arrowY = tg.y - (tg.type === 'Role' ? 17 : 13) * Math.sin(arrowAngle);
 
@@ -289,12 +376,12 @@ export default function GraphCanvas({
           ctx.lineTo(arrowX - arrowSize * Math.cos(arrowAngle - Math.PI / 6), arrowY - arrowSize * Math.sin(arrowAngle - Math.PI / 6));
           ctx.lineTo(arrowX - arrowSize * Math.cos(arrowAngle + Math.PI / 6), arrowY - arrowSize * Math.sin(arrowAngle + Math.PI / 6));
           
-          if (isPath) {
+          if (isSelectedLink) {
+            ctx.fillStyle = '#a855f7';
+          } else if (isLinkInActivePath) {
             ctx.fillStyle = '#38bdf8';
           } else if (isCategoryLink) {
             ctx.fillStyle = catColor;
-          } else if (isSelectedLink) {
-            ctx.fillStyle = 'rgba(168, 85, 247, 0.9)';
           } else {
             ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
           }
@@ -306,7 +393,7 @@ export default function GraphCanvas({
       for (const n of nodes) {
         const isPath = pathSet.has(n.id);
         const roleCats = ROLE_CATEGORIES[n.id] || [];
-        const matchesCategory = hasCustomPath 
+        const matchesCategory = hasActivePath 
           ? isPath 
           : (activeCategory === 'All' || 
              n.category === activeCategory || 
@@ -314,16 +401,18 @@ export default function GraphCanvas({
              (n.type === 'Role' && roleCats.includes(activeCategory)));
         const isSelected = selectedNode?.id === n.id;
 
-        ctx.globalAlpha = matchesCategory ? 1 : 0.12;
+        ctx.globalAlpha = matchesCategory || isSelected ? 1 : 0.12;
 
         const radius = n.type === 'Role' ? 14 : 10;
         const color = CATEGORY_COLORS[n.category || n.type] || '#6366f1';
 
-        // Glow
-        if (isPath || isSelected) {
+        // Luminous Glow on Selected or Path Nodes
+        if (isSelected || isPath) {
           ctx.beginPath();
-          ctx.arc(n.x, n.y, radius + 7, 0, Math.PI * 2);
-          ctx.fillStyle = isPath ? 'rgba(56, 189, 248, 0.4)' : 'rgba(99, 102, 241, 0.35)';
+          ctx.arc(n.x, n.y, radius + (isSelected ? 8 : 5), 0, Math.PI * 2);
+          ctx.fillStyle = isSelected 
+            ? 'rgba(168, 85, 247, 0.45)' 
+            : 'rgba(56, 189, 248, 0.35)';
           ctx.fill();
         }
 
@@ -332,13 +421,13 @@ export default function GraphCanvas({
         ctx.arc(n.x, n.y, radius, 0, Math.PI * 2);
         ctx.fillStyle = color;
         ctx.fill();
-        ctx.strokeStyle = isSelected ? '#ffffff' : 'rgba(255, 255, 255, 0.8)';
-        ctx.lineWidth = isSelected ? 2.5 : 1.2;
+        ctx.strokeStyle = isSelected ? '#ffffff' : (isPath ? '#38bdf8' : 'rgba(255, 255, 255, 0.8)');
+        ctx.lineWidth = isSelected ? 3 : (isPath ? 2 : 1.2);
         ctx.stroke();
 
         // Label
-        ctx.fillStyle = isPath || isSelected ? '#ffffff' : '#cbd5e1';
-        ctx.font = `${isPath || isSelected ? 'bold 11px' : '10px'} Outfit, sans-serif`;
+        ctx.fillStyle = isSelected ? '#ffffff' : (isPath ? '#e0f2fe' : '#cbd5e1');
+        ctx.font = `${isSelected || isPath ? 'bold 11px' : '10px'} Outfit, sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
         ctx.fillText(n.label, n.x, n.y + radius + 4);
@@ -355,7 +444,7 @@ export default function GraphCanvas({
       isRunning = false;
       cancelAnimationFrame(animFrameRef.current);
     };
-  }, [activeCategory, highlightedPathNodeIds, selectedNode]);
+  }, [activeCategory, highlightedPathNodeIds, selectedNode, fullUpstreamIds]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -394,22 +483,19 @@ export default function GraphCanvas({
     return null;
   };
 
-  const incomingPrereqs = selectedNode
-    ? simulationLinksRef.current
-        .filter(l => l.target === selectedNode.id)
-        .map(l => simulationNodesRef.current.find(n => n.id === l.source))
-        .filter(Boolean) as Node[]
-    : [];
-
-  const outgoingUnlocks = selectedNode
-    ? simulationLinksRef.current
-        .filter(l => l.source === selectedNode.id)
-        .map(l => simulationNodesRef.current.find(n => n.id === l.target))
-        .filter(Boolean) as Node[]
-    : [];
+  const selectNodeDirectly = (node: Node | null) => {
+    // Clear external highlight to ensure newly clicked node is isolated and accurate
+    if (highlightedPathNodeIds.length > 0) {
+      onClearHighlights?.();
+    }
+    setSelectedNodeId(node ? node.id : null);
+    onSelectNode?.(node);
+  };
 
   const handleCategoryClick = (cat: string) => {
     onClearHighlights?.();
+    setSelectedNodeId(null);
+    onSelectNode?.(null);
     setActiveCategory(cat);
   };
 
@@ -424,23 +510,25 @@ export default function GraphCanvas({
               <button
                 key={cat}
                 onClick={() => handleCategoryClick(cat)}
-                className={`btn-filter ${activeCategory === cat && highlightedPathNodeIds.length === 0 ? 'active' : ''}`}
+                className={`btn-filter ${activeCategory === cat && highlightedPathNodeIds.length === 0 && !selectedNode ? 'active' : ''}`}
                 style={{ flexShrink: 0 }}
               >
                 {cat === 'Role' ? 'Careers/Roles' : cat}
               </button>
             ))}
-            {highlightedPathNodeIds.length > 0 && (
+            {(highlightedPathNodeIds.length > 0 || selectedNode) && (
               <button
                 onClick={() => {
                   onClearHighlights?.();
+                  setSelectedNodeId(null);
+                  onSelectNode?.(null);
                   setActiveCategory('All');
                 }}
                 className="btn-secondary"
                 style={{ fontSize: 11, padding: '4px 10px', color: '#fbbf24', borderColor: 'rgba(251,191,36,0.4)', flexShrink: 0 }}
               >
                 <EyeOff style={{ width: 12, height: 12 }} />
-                <span>Reset Highlight ({highlightedPathNodeIds.length})</span>
+                <span>Reset View</span>
               </button>
             )}
           </div>
@@ -465,8 +553,7 @@ export default function GraphCanvas({
             const { worldX, worldY, mouseX, mouseY } = getCanvasCoords(e);
             const hit = findNodeAt(worldX, worldY);
             if (hit) {
-              setSelectedNode(hit);
-              onSelectNode?.(hit);
+              selectNodeDirectly(hit);
             } else {
               isDraggingRef.current = true;
               dragStartRef.current = { x: mouseX - transformRef.current.x, y: mouseY - transformRef.current.y };
@@ -502,70 +589,125 @@ export default function GraphCanvas({
 
       {/* Side Details Inspector on Node Click */}
       {selectedNode && (
-        <div className="glass-panel" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14, background: '#090e1a' }}>
+        <div className="glass-panel" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14, background: '#090e1a', overflowY: 'auto' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span className="badge" style={{ backgroundColor: `${CATEGORY_COLORS[selectedNode.category || selectedNode.type]}25`, color: CATEGORY_COLORS[selectedNode.category || selectedNode.type], border: `1px solid ${CATEGORY_COLORS[selectedNode.category || selectedNode.type]}50` }}>
-              {selectedNode.category || selectedNode.type}
+              {selectedNode.type === 'Role' ? 'TARGET CAREER ROLE' : (selectedNode.category || selectedNode.type)}
             </span>
-            <button onClick={() => setSelectedNode(null)} style={{ background: 'none', color: 'var(--text-muted)', fontSize: 14 }}>✕</button>
+            <button onClick={() => selectNodeDirectly(null)} style={{ background: 'none', color: 'var(--text-muted)', fontSize: 14, cursor: 'pointer', padding: 4 }}>✕</button>
           </div>
 
           <div>
             <h3 style={{ fontSize: 16, fontWeight: 800, color: '#ffffff' }}>{selectedNode.label}</h3>
+            {selectedNode.domain && (
+              <span style={{ fontSize: 11, color: '#38bdf8', fontWeight: 600, display: 'block', marginTop: 2 }}>{selectedNode.domain}</span>
+            )}
             {selectedNode.description && (
-              <p style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>{selectedNode.description}</p>
+              <p style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 6, lineHeight: 1.5 }}>{selectedNode.description}</p>
             )}
           </div>
 
-          {selectedNode.marketDemand && (
-            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-              Market Demand: <strong style={{ color: '#34d399' }}>{selectedNode.marketDemand}%</strong>
-            </div>
-          )}
+          {/* Stats Bar */}
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', background: 'rgba(15, 23, 42, 0.6)', padding: '8px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.05)' }}>
+            {selectedNode.marketDemand && (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                Market Demand: <strong style={{ color: '#34d399' }}>{selectedNode.marketDemand}%</strong>
+              </div>
+            )}
+            {selectedNode.difficulty && (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                Difficulty: <strong style={{ color: '#fbbf24' }}>{selectedNode.difficulty}</strong>
+              </div>
+            )}
+            {selectedNode.avgSalary && (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                Avg Salary: <strong style={{ color: '#34d399' }}>{selectedNode.avgSalary}</strong>
+              </div>
+            )}
+            {selectedNode.seniorityLevel && (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                Level: <strong style={{ color: '#a855f7' }}>{selectedNode.seniorityLevel}</strong>
+              </div>
+            )}
+          </div>
 
-          {/* Prerequisite Chain Inspector */}
+          {/* Prerequisites / Required Skills */}
           <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 10 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: '#38bdf8', display: 'block', marginBottom: 6 }}>
-              ⬅ Prerequisites Needed Before:
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#38bdf8', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+              ⬅ {selectedNode.type === 'Role' ? 'Required Skills for this Role:' : 'Prerequisites Needed Before:'}
             </span>
             {incomingPrereqs.length === 0 ? (
               <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Foundation skill (no prerequisites)</span>
             ) : (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {incomingPrereqs.map(p => (
-                  <span key={p.id} style={{ background: 'rgba(30,41,59,0.8)', color: '#f1f5f9', padding: '3px 8px', borderRadius: 6, fontSize: 10, border: '1px solid rgba(255,255,255,0.1)' }}>
+                  <button
+                    key={p.id}
+                    onClick={() => selectNodeDirectly(p)}
+                    style={{ background: 'rgba(30,41,59,0.8)', color: '#f1f5f9', padding: '4px 8px', borderRadius: 6, fontSize: 10, border: '1px solid rgba(255,255,255,0.1)', cursor: 'pointer', textAlign: 'left', transition: 'all 0.15s' }}
+                    title={`Click to inspect ${p.label}`}
+                  >
                     {p.label}
-                  </span>
+                  </button>
                 ))}
               </div>
             )}
           </div>
 
-          {/* Unlocks Next */}
-          <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 10 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: '#a855f7', display: 'block', marginBottom: 6 }}>
-              ➡ Skills/Roles This Unlocks Next:
-            </span>
-            {outgoingUnlocks.length === 0 ? (
-              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Target destination node</span>
-            ) : (
+          {/* Unlocks Next (For Skills) */}
+          {selectedNode.type === 'Skill' && (
+            <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 10 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#a855f7', display: 'block', marginBottom: 8 }}>
+                ➡ Technologies This Unlocks Next:
+              </span>
+              {outgoingSkills.length === 0 ? (
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Specialized / Terminal Skill</span>
+              ) : (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {outgoingSkills.map(o => (
+                    <button
+                      key={o.id}
+                      onClick={() => selectNodeDirectly(o)}
+                      style={{ background: 'rgba(30,41,59,0.8)', color: '#f1f5f9', padding: '4px 8px', borderRadius: 6, fontSize: 10, border: '1px solid rgba(255,255,255,0.1)', cursor: 'pointer', textAlign: 'left' }}
+                      title={`Click to inspect ${o.label}`}
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Career Roles Requiring this Skill */}
+          {selectedNode.type === 'Skill' && outgoingRoles.length > 0 && (
+            <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 10 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#eab308', display: 'block', marginBottom: 8 }}>
+                🎯 Target Roles Requiring This Skill:
+              </span>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {outgoingUnlocks.map(o => (
-                  <span key={o.id} style={{ background: 'rgba(30,41,59,0.8)', color: '#f1f5f9', padding: '3px 8px', borderRadius: 6, fontSize: 10, border: '1px solid rgba(255,255,255,0.1)' }}>
-                    {o.label}
-                  </span>
+                {outgoingRoles.map(r => (
+                  <button
+                    key={r.id}
+                    onClick={() => selectNodeDirectly(r)}
+                    style={{ background: 'rgba(234, 179, 8, 0.12)', color: '#fef08a', padding: '4px 8px', borderRadius: 6, fontSize: 10, border: '1px solid rgba(234, 179, 8, 0.3)', cursor: 'pointer', textAlign: 'left' }}
+                    title={`Click to inspect role ${r.label}`}
+                  >
+                    {r.label}
+                  </button>
                 ))}
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
+          {/* Action button */}
           <button
             onClick={() => onTracePathTo?.(selectedNode.id)}
             className="btn-primary"
             style={{ width: '100%', justifyContent: 'center', marginTop: 'auto', fontSize: 11, padding: '8px 12px' }}
           >
             <Sparkles style={{ width: 12, height: 12 }} />
-            <span>Trace Full Path from Root</span>
+            <span>Open Path Finder for this {selectedNode.type}</span>
           </button>
         </div>
       )}
